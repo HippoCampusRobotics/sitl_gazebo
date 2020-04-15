@@ -1,11 +1,11 @@
 <?xml version="1.0" ?>
 <sdf version="1.5">
-  <model name="april_ground">
+  <model name="uuv_apriltag_tank">
     <static>true</static>
     <link name="link">
       <visual name="visual">
        <geometry>
-            <mesh><uri>model://uuv2_april_world/meshes/tank_with_apriltag_ground_true_scale.dae</uri></mesh>
+            <mesh><uri>model://uuv_apriltag_tank/meshes/tank_with_apriltag_ground_true_scale.dae</uri></mesh>
        </geometry>
       </visual>
     </link>
