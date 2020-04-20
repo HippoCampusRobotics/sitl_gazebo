@@ -128,6 +128,17 @@
     <link name="camera_link">
       <gravity>0</gravity>
       <pose>0.05 0 -0.02 0 1.57 0</pose>
+      <inertial>
+        <mass>0.001</mass>
+        <inertia>
+          <ixx>1e-8</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1e-8</iyy>
+          <iyz>0</iyz>
+          <izz>1e-8</izz>
+        </inertia>
+      </inertial>
       <sensor type="camera" name="camera1">
         <update_rate>30.0</update_rate>
         <visualize>true</visualize>
