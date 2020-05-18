@@ -139,7 +139,7 @@
           <izz>1e-8</izz>
         </inertia>
       </inertial>
-      <sensor type="camera" name="camera1">
+      <sensor type="camera" name="camera">
         <update_rate>30.0</update_rate>
         <visualize>true</visualize>
         <always_on>1</always_on>
@@ -160,16 +160,16 @@
                  That pixel's noise value is added to each of its color
                  channels, which at that point lie in the range [0,1]. -->
             <mean>0.0</mean>
-            <stddev>0.007</stddev>
+            <stddev>0.1</stddev>
           </noise>
         </camera>
         <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
           <alwaysOn>true</alwaysOn>
           <updateRate>0</updateRate>
-          <cameraName>camera1</cameraName>
+          <cameraName>camera</cameraName>
           <imageTopicName>image_raw</imageTopicName>
           <cameraInfoTopicName>camera_info</cameraInfoTopicName>
-          <frameName>camera_link</frameName>
+          <frameName>camera_frame</frameName>
           <hackBaseline>0</hackBaseline>
           <distortionK1>0.0</distortionK1>
           <distortionK2>0.0</distortionK2>
@@ -516,6 +516,17 @@
     </joint>
 
     <!-- Plugins -->
+
+    <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
+      <alwaysOn>true</alwaysOn>
+      <updateRate>50.0</updateRate>
+      <bodyName>base_link</bodyName>
+      <topicName>ground_truth/state</topicName>
+      <gaussianNoise>0.0</gaussianNoise>
+      <frameName>world</frameName>
+      <xyzOffsets>0 0 0</xyzOffsets>
+      <rpyOffsets>0 0 0</rpyOffsets>
+    </plugin>
 
     <plugin name="rosbag" filename="libgazebo_multirotor_base_plugin.so">
       <robotNamespace />
