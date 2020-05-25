@@ -208,21 +208,6 @@ void GazeboMavlinkInterface::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf
           {
             std::string joint_name = channel->Get<std::string>("joint_name");
             joints_[index] = model_->GetJoint(joint_name);
-            if (joints_[index] == nullptr)
-            {
-              gzwarn << "joint [" << joint_name << "] not found for channel["
-                     << index << "] no joint control for this channel.\n";
-            }
-            else
-            {
-              gzdbg << "joint [" << joint_name << "] found for channel["
-                    << index << "] joint control active for this channel.\n";
-            }
-          }
-          else
-          {
-            gzdbg << "<joint_name> not found for channel[" << index
-                  << "] no joint control will be performed for this channel.\n";
           }
 
           // setup joint control pid to control joint
@@ -369,7 +354,7 @@ void GazeboMavlinkInterface::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf
   vision_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + vision_sub_topic_, &GazeboMavlinkInterface::VisionCallback, this);
   mag_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + mag_sub_topic_, &GazeboMavlinkInterface::MagnetometerCallback, this);
   baro_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + baro_sub_topic_, &GazeboMavlinkInterface::BarometerCallback, this);
-
+  wind_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + wind_sub_topic_, &GazeboMavlinkInterface::WindVelocityCallback, this);
   // Get the model links
   auto links = model_->GetLinks();
 
@@ -879,12 +864,12 @@ void GazeboMavlinkInterface::SendSensorMessages()
   // send always accel and gyro data (not dependent of the bitmask)
   // required so to keep the timestamps on sync and the lockstep can
   // work properly
-  ignition::math::Vector3d accel_b = q_br.RotateVector(ignition::math::Vector3d(
+  ignition::math::Vector3d accel_b = q_FLU_to_FRD.RotateVector(ignition::math::Vector3d(
     last_imu_message_.linear_acceleration().x(),
     last_imu_message_.linear_acceleration().y(),
     last_imu_message_.linear_acceleration().z()));
 
-  ignition::math::Vector3d gyro_b = q_br.RotateVector(ignition::math::Vector3d(
+  ignition::math::Vector3d gyro_b = q_FLU_to_FRD.RotateVector(ignition::math::Vector3d(
     last_imu_message_.angular_velocity().x(),
     last_imu_message_.angular_velocity().y(),
     last_imu_message_.angular_velocity().z()));
@@ -900,10 +885,9 @@ void GazeboMavlinkInterface::SendSensorMessages()
 
   // send only mag data
   if (mag_updated_) {
-    ignition::math::Quaterniond q_gb = q_gr*q_br.Inverse();
-    ignition::math::Quaterniond q_nb = q_ng*q_gb;
+    ignition::math::Quaterniond q_body_to_world = q_ENU_to_NED * q_gr * q_FLU_to_FRD.Inverse();
 
-    ignition::math::Vector3d mag_b = q_nb.RotateVectorReverse(mag_n_);
+    ignition::math::Vector3d mag_b = q_body_to_world.RotateVectorReverse(mag_n_);
 
     sensor_msg.xmag = mag_b.X();
     sensor_msg.ymag = mag_b.Y();
@@ -935,18 +919,18 @@ void GazeboMavlinkInterface::SendSensorMessages()
     const float diff_pressure_stddev = 0.01f;
     const float diff_pressure_noise = standard_normal_distribution_(random_generator_) * diff_pressure_stddev;
 
+    ignition::math::Quaterniond q_gb = q_gr*q_FLU_to_FRD.Inverse();
 #if GAZEBO_MAJOR_VERSION >= 9
-    ignition::math::Vector3d vel_b = q_br.RotateVector(model_->RelativeLinearVel());
+    ignition::math::Vector3d vel_a = q_gb.RotateVector(model_->WorldLinearVel() - wind_vel_);
 #else
-    ignition::math::Vector3d vel_b = q_br.RotateVector(ignitionFromGazeboMath(model_->GetRelativeLinearVel()));
+    ignition::math::Vector3d vel_a = q_gb.RotateVector(ignitionFromGazeboMath(model_->GetWorldLinearVel() -  wind_vel_));
 #endif
-
     // calculate differential pressure in hPa
     // if vehicle is a tailsitter the airspeed axis is different (z points from nose to tail)
     if (vehicle_is_tailsitter_) {
-      sensor_msg.diff_pressure = 0.005f * rho * vel_b.Z() * vel_b.Z() + diff_pressure_noise;
+      sensor_msg.diff_pressure = 0.005f * rho * vel_a.Z() * vel_a.Z() + diff_pressure_noise;
     } else {
-      sensor_msg.diff_pressure = 0.005f * rho * vel_b.X() * vel_b.X() + diff_pressure_noise;
+      sensor_msg.diff_pressure = 0.005f * rho * vel_a.X() * vel_a.X() + diff_pressure_noise;
     }
     sensor_msg.fields_updated = sensor_msg.fields_updated | SensorSource::DIFF_PRESS;
 
@@ -969,23 +953,22 @@ void GazeboMavlinkInterface::SendGroundTruth()
     last_imu_message_.orientation().y(),
     last_imu_message_.orientation().z());
 
-  ignition::math::Quaterniond q_gb = q_gr*q_br.Inverse();
-  ignition::math::Quaterniond q_nb = q_ng*q_gb;
+  ignition::math::Quaterniond q_nb = q_ENU_to_NED * q_gr * q_FLU_to_FRD.Inverse();
 
 #if GAZEBO_MAJOR_VERSION >= 9
-  ignition::math::Vector3d vel_b = q_br.RotateVector(model_->RelativeLinearVel());
-  ignition::math::Vector3d vel_n = q_ng.RotateVector(model_->WorldLinearVel());
-  ignition::math::Vector3d omega_nb_b = q_br.RotateVector(model_->RelativeAngularVel());
+  ignition::math::Vector3d vel_b = q_FLU_to_FRD.RotateVector(model_->RelativeLinearVel());
+  ignition::math::Vector3d vel_n = q_ENU_to_NED.RotateVector(model_->WorldLinearVel());
+  ignition::math::Vector3d omega_nb_b = q_FLU_to_FRD.RotateVector(model_->RelativeAngularVel());
 #else
-  ignition::math::Vector3d vel_b = q_br.RotateVector(ignitionFromGazeboMath(model_->GetRelativeLinearVel()));
-  ignition::math::Vector3d vel_n = q_ng.RotateVector(ignitionFromGazeboMath(model_->GetWorldLinearVel()));
-  ignition::math::Vector3d omega_nb_b = q_br.RotateVector(ignitionFromGazeboMath(model_->GetRelativeAngularVel()));
+  ignition::math::Vector3d vel_b = q_FLU_to_FRD.RotateVector(ignitionFromGazeboMath(model_->GetRelativeLinearVel()));
+  ignition::math::Vector3d vel_n = q_ENU_to_NED.RotateVector(ignitionFromGazeboMath(model_->GetWorldLinearVel()));
+  ignition::math::Vector3d omega_nb_b = q_FLU_to_FRD.RotateVector(ignitionFromGazeboMath(model_->GetRelativeAngularVel()));
 #endif
 
 #if GAZEBO_MAJOR_VERSION >= 9
-  ignition::math::Vector3d accel_true_b = q_br.RotateVector(model_->RelativeLinearAccel());
+  ignition::math::Vector3d accel_true_b = q_FLU_to_FRD.RotateVector(model_->RelativeLinearAccel());
 #else
-  ignition::math::Vector3d accel_true_b = q_br.RotateVector(ignitionFromGazeboMath(model_->GetRelativeLinearAccel()));
+  ignition::math::Vector3d accel_true_b = q_FLU_to_FRD.RotateVector(ignitionFromGazeboMath(model_->GetRelativeLinearAccel()));
 #endif
 
   // send ground truth
@@ -1016,9 +999,9 @@ void GazeboMavlinkInterface::SendGroundTruth()
   hil_state_quat.ind_airspeed = vel_b.X();
 
 #if GAZEBO_MAJOR_VERSION >= 9
-  hil_state_quat.true_airspeed = model_->WorldLinearVel().Length() * 100;  //no wind simulated
+  hil_state_quat.true_airspeed = (model_->WorldLinearVel() -  wind_vel_).Length() * 100;
 #else
-  hil_state_quat.true_airspeed = model_->GetWorldLinearVel().GetLength() * 100;  //no wind simulated
+  hil_state_quat.true_airspeed = (model_->GetWorldLinearVel() -  wind_vel_).GetLength() * 100;
 #endif
 
   hil_state_quat.xacc = accel_true_b.X() * 1000;
@@ -1205,7 +1188,7 @@ void GazeboMavlinkInterface::VisionCallback(OdomPtr& odom_message) {
   mavlink_message_t msg;
 
   // transform position from local ENU to local NED frame
-  ignition::math::Vector3d position = q_ng.RotateVector(ignition::math::Vector3d(
+  ignition::math::Vector3d position = q_ENU_to_NED.RotateVector(ignition::math::Vector3d(
     odom_message->position().x(),
     odom_message->position().y(),
     odom_message->position().z()));
@@ -1221,17 +1204,17 @@ void GazeboMavlinkInterface::VisionCallback(OdomPtr& odom_message) {
   // transform the vehicle orientation from the ENU to the NED frame
   // q_nb is the quaternion that represents the orientation of the vehicle
   // the NED earth/local
-  ignition::math::Quaterniond q_nb = q_ng * q_gr * q_br.Inverse();
+  ignition::math::Quaterniond q_nb = q_ENU_to_NED * q_gr * q_FLU_to_FRD.Inverse();
 
   // transform linear velocity from local ENU to body FRD frame
-  ignition::math::Vector3d linear_velocity = q_br.Inverse().RotateVector(
+  ignition::math::Vector3d linear_velocity = q_FLU_to_FRD.RotateVector(
     q_gr.Inverse().RotateVector(ignition::math::Vector3d(
       odom_message->linear_velocity().x(),
       odom_message->linear_velocity().y(),
       odom_message->linear_velocity().z())));
 
   // transform angular velocity from body FLU to body FRD frame
-  ignition::math::Vector3d angular_velocity = q_br.Inverse().RotateVector(ignition::math::Vector3d(
+  ignition::math::Vector3d angular_velocity = q_FLU_to_FRD.RotateVector(ignition::math::Vector3d(
     odom_message->angular_velocity().x(),
     odom_message->angular_velocity().y(),
     odom_message->angular_velocity().z()));
@@ -1244,7 +1227,11 @@ void GazeboMavlinkInterface::VisionCallback(OdomPtr& odom_message) {
     odom.time_usec = odom_message->time_usec();
 
     odom.frame_id = MAV_FRAME_LOCAL_NED;
-    odom.child_frame_id = MAV_FRAME_BODY_FRD;
+    //TODO: This is a interim fix to get the code to compile
+    //      This needs to eventually be changed to MAV_FRAME_BODY_OFFSET_NED
+    //      This is due to a update on the mavlink: https://github.com/mavlink/mavlink/pull/1112
+    //      where MAV_FRAME_BODY_FRD has been deprecated
+    odom.child_frame_id = 12; //MAV_FRAME_BODY_FRD MAV_FRAME_RESERVED_12
 
     odom.x = position.X();
     odom.y = position.Y();
@@ -1273,8 +1260,9 @@ void GazeboMavlinkInterface::VisionCallback(OdomPtr& odom_message) {
       for (size_t y = x; y < 6; y++) {
         size_t index = 6 * x + y;
 
-        odom.pose_covariance[count++] = odom_message->pose_covariance().data()[index];
-        odom.velocity_covariance[count++] = odom_message->velocity_covariance().data()[index];
+        odom.pose_covariance[count] = odom_message->pose_covariance().data()[index];
+        odom.velocity_covariance[count] = odom_message->velocity_covariance().data()[index];
+        count++;
       }
     }
 
@@ -1338,6 +1326,12 @@ void GazeboMavlinkInterface::BarometerCallback(BarometerPtr& baro_msg) {
   // no specific diff pressure sensor plugin yet
   baro_updated_ = true;
   diff_press_updated_ = true;
+}
+
+void GazeboMavlinkInterface::WindVelocityCallback(WindPtr& msg) {
+  wind_vel_ = ignition::math::Vector3d(msg->velocity().x(),
+            msg->velocity().y(),
+            msg->velocity().z());
 }
 
 void GazeboMavlinkInterface::pollForMAVLinkMessages()

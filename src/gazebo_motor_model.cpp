@@ -33,7 +33,8 @@ void GazeboMotorModel::InitializeParams() {}
 
 void GazeboMotorModel::Publish() {
   turning_velocity_msg_.set_data(joint_->GetVelocity(0));
-  motor_velocity_pub_->Publish(turning_velocity_msg_);
+  // FIXME: Commented out to prevent warnings about queue limit reached.
+  // motor_velocity_pub_->Publish(turning_velocity_msg_);
 }
 
 void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
@@ -147,7 +148,9 @@ void GazeboMotorModel::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
   command_sub_ = node_handle_->Subscribe<mav_msgs::msgs::CommandMotorSpeed>("~/" + model_->GetName() + command_sub_topic_, &GazeboMotorModel::VelocityCallback, this);
   //std::cout << "[gazebo_motor_model]: Subscribe to gz topic: "<< motor_failure_sub_topic_ << std::endl;
   motor_failure_sub_ = node_handle_->Subscribe<msgs::Int>(motor_failure_sub_topic_, &GazeboMotorModel::MotorFailureCallback, this);
-  motor_velocity_pub_ = node_handle_->Advertise<std_msgs::msgs::Float>("~/" + model_->GetName() + motor_speed_pub_topic_, 1);
+  // FIXME: Commented out to prevent warnings about queue limit reached.
+  //motor_velocity_pub_ = node_handle_->Advertise<std_msgs::msgs::Float>("~/" + model_->GetName() + motor_speed_pub_topic_, 1);
+  wind_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + wind_sub_topic_, &GazeboMotorModel::WindVelocityCallback, this);
 
   // Create the first order filter.
   rotor_velocity_filter_.reset(new FirstOrderFilter<double>(time_constant_up_, time_constant_down_, ref_motor_rot_vel_));
@@ -197,9 +200,9 @@ void GazeboMotorModel::UpdateForcesAndMoments() {
   // XXX this has to be modelled better
   //
 #if GAZEBO_MAJOR_VERSION >= 9
-  ignition::math::Vector3d body_velocity = link_->WorldLinearVel();
+  ignition::math::Vector3d body_velocity = link_->WorldLinearVel() - wind_vel_;
 #else
-  ignition::math::Vector3d body_velocity = ignitionFromGazeboMath(link_->GetWorldLinearVel());
+  ignition::math::Vector3d body_velocity = ignitionFromGazeboMath(link_->GetWorldLinearVel())  - wind_vel_;
 #endif
   double vel = body_velocity.Length();
   double scalar = 1 - vel / 25.0; // at 50 m/s the rotor will not produce any force anymore
@@ -286,6 +289,12 @@ void GazeboMotorModel::UpdateMotorFail() {
        screen_msg_flag = 1;
      }
   }
+}
+
+void GazeboMotorModel::WindVelocityCallback(WindPtr& msg) {
+  wind_vel_ = ignition::math::Vector3d(msg->velocity().x(),
+            msg->velocity().y(),
+            msg->velocity().z());
 }
 
 GZ_REGISTER_MODEL_PLUGIN(GazeboMotorModel);
